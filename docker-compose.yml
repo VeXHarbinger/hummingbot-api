@@ -7,22 +7,50 @@ services:
     volumes:
       - ./bots:/hummingbot-api/bots
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./routers:/hummingbot-api/routers
+      - ./services:/hummingbot-api/services
+      - ./models:/hummingbot-api/models
     env_file:
       - .env
     environment:
-      # Override specific values for Docker networking
       - BROKER_HOST=emqx
       - DATABASE_URL=postgresql+asyncpg://hbot:hummingbot-api@postgres:5432/hummingbot_api
-      - GATEWAY_URL=http://host.docker.internal:15888
-    extra_hosts:
-      # Map host.docker.internal to host gateway for Linux compatibility
-      # On macOS/Windows, Docker Desktop provides this automatically
-      # On Linux, this maps to the docker bridge gateway IP
-      - "host.docker.internal:host-gateway"
     networks:
       - emqx-bridge
     depends_on:
       - postgres
+  hummingbot-gateway:
+   restart: always
+   container_name: hummingbot-gateway
+   image: hummingbot/gateway:latest
+   ports:
+     - "15888:15888"
+   volumes:
+     - "./gateway-files/conf:/home/gateway/conf"
+     - "./gateway-files/logs:/home/gateway/logs"
+     - ./certs:/home/gateway/certs
+   environment:
+     - GATEWAY_PASSPHRASE=admin
+     - GATEWAY_URL=http://hummingbot-gateway:15888
+     - DEV=true
+   networks:
+     - emqx-bridge 
+  hummingbot-mcp:
+    container_name: hummingbot-mcp
+    image: hummingbot/hummingbot-mcp:latest
+    stdin_open: true
+    tty: true
+    env_file:
+      - .env
+    environment:
+      - HUMMINGBOT_API_URL=http://hummingbot-api:8000
+      - GATEWAY_API_HOST=hummingbot-gateway
+      - GATEWAY_URL=http://hummingbot-gateway:15888
+    depends_on:
+      - hummingbot-api
+      - hummingbot-gateway
+    networks:
+      - emqx-bridge
   emqx:
     container_name: hummingbot-broker
     image: emqx:5

@@ -17,11 +17,15 @@ from database.repositories import GatewayCLMMRepository
 from models import (
     CLMMOpenPositionRequest,
     CLMMOpenPositionResponse,
+    CLMMQuoteRequest,
+    CLMMQuoteResponse,
     CLMMAddLiquidityRequest,
     CLMMRemoveLiquidityRequest,
     CLMMClosePositionRequest,
     CLMMCollectFeesRequest,
     CLMMCollectFeesResponse,
+    CLMMPositionFeesRequest,
+    CLMMPositionFeesResponse,
     CLMMPositionsOwnedRequest,
     CLMMPositionInfo,
     CLMMPoolInfoResponse,
@@ -390,6 +394,189 @@ async def get_clmm_pool_info(
     except Exception as e:
         logger.error(f"Error getting CLMM pool info: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error getting CLMM pool info: {str(e)}")
+
+
+@router.post("/clmm/quote", response_model=CLMMQuoteResponse)
+async def quote_clmm_position(
+    request: CLMMQuoteRequest,
+    accounts_service: AccountsService = Depends(get_accounts_service)
+):
+    """
+    Calculate exact token amounts needed for a CLMM position WITHOUT submitting transaction.
+    
+    This endpoint implements the same calculation logic as PancakeSwap's UI:
+    - Provide ONE token amount
+    - Get back BOTH token amounts calculated using Uniswap V3 math
+    - See exactly what the position will require BEFORE submitting
+    
+    Example:
+        POST /gateway/clmm/quote
+        {
+            "connector": "pancakeswap",
+            "network": "ethereum-bsc",
+            "pool_address": "0xbc0E5A205D729299D93973d634E2507CD8b625A3",
+            "lower_price": 0.4262,
+            "upper_price": 0.4369,
+            "base_token_amount": 183.38  # Calculate quote_token_amount
+        }
+        
+    Returns:
+        {
+            "current_price": 0.4317,
+            "base_token_amount": 183.38,
+            "quote_token_amount": 27.91,  # Calculated!
+            "liquidity": "1234567890",
+            "in_range": true
+        }
+    """
+    try:
+        # Validate inputs
+        if not request.base_token_amount and not request.quote_token_amount:
+            raise HTTPException(
+                status_code=400,
+                detail="Must provide either base_token_amount or quote_token_amount"
+            )
+        
+        if request.base_token_amount and request.quote_token_amount:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide only ONE of base_token_amount or quote_token_amount, not both"
+            )
+        
+        if not await accounts_service.gateway_client.ping():
+            raise HTTPException(status_code=503, detail="Gateway service is not available")
+        
+        # Parse network_id
+        chain, network = accounts_service.gateway_client.parse_network_id(request.network)
+        
+        # Get pool info to get current price
+        pool_info = await accounts_service.gateway_client.clmm_pool_info(
+            connector=request.connector,
+            network=network,
+            pool_address=request.pool_address
+        )
+        
+        if not pool_info:
+            raise HTTPException(status_code=503, detail="Failed to get pool info from Gateway")
+        
+        current_price = float(pool_info.get("price", 0))
+        if not current_price:
+            raise HTTPException(status_code=400, detail="Could not get current pool price")
+        
+        # Calculate token amounts using Uniswap V3 math
+        lower_price = float(request.lower_price)
+        upper_price = float(request.upper_price)
+        
+        # Import math functions
+        import math
+        
+        def sqrt_price(price: float) -> float:
+            return math.sqrt(price)
+        
+        def calculate_liquidity_from_amount(
+            current_price: float,
+            lower_price: float,
+            upper_price: float,
+            amount0: Optional[float] = None,  # base token
+            amount1: Optional[float] = None   # quote token
+        ) -> float:
+            """Calculate liquidity from one token amount (Uniswap V3 formula)"""
+            sqrt_current = sqrt_price(current_price)
+            sqrt_lower = sqrt_price(lower_price)
+            sqrt_upper = sqrt_price(upper_price)
+            
+            if current_price < lower_price:
+                # Price below range - only need base token
+                if amount0 is None:
+                    raise ValueError("Price below range - need base token amount")
+                liquidity = amount0 * (sqrt_lower * sqrt_upper) / (sqrt_upper - sqrt_lower)
+            elif current_price >= upper_price:
+                # Price above range - only need quote token
+                if amount1 is None:
+                    raise ValueError("Price above range - need quote token amount")
+                liquidity = amount1 / (sqrt_upper - sqrt_lower)
+            else:
+                # Price in range - can calculate from either token
+                if amount0 is not None:
+                    liquidity = amount0 * (sqrt_upper * sqrt_current) / (sqrt_upper - sqrt_current)
+                elif amount1 is not None:
+                    liquidity = amount1 / (sqrt_current - sqrt_lower)
+                else:
+                    raise ValueError("Need at least one token amount")
+            
+            return liquidity
+        
+        def calculate_amounts_from_liquidity(
+            liquidity: float,
+            current_price: float,
+            lower_price: float,
+            upper_price: float
+        ) -> tuple[float, float]:
+            """Calculate both token amounts from liquidity"""
+            sqrt_current = sqrt_price(current_price)
+            sqrt_lower = sqrt_price(lower_price)
+            sqrt_upper = sqrt_price(upper_price)
+            
+            if current_price < lower_price:
+                # Price below range - only base token needed
+                amount0 = liquidity * (sqrt_upper - sqrt_lower) / (sqrt_lower * sqrt_upper)
+                amount1 = 0
+            elif current_price >= upper_price:
+                # Price above range - only quote token needed
+                amount0 = 0
+                amount1 = liquidity * (sqrt_upper - sqrt_lower)
+            else:
+                # Price in range - need both tokens
+                amount0 = liquidity * (sqrt_upper - sqrt_current) / (sqrt_upper * sqrt_current)
+                amount1 = liquidity * (sqrt_current - sqrt_lower)
+            
+            return amount0, amount1
+        
+        # Step 1: Calculate liquidity from provided amount
+        base_amount = float(request.base_token_amount) if request.base_token_amount else None
+        quote_amount = float(request.quote_token_amount) if request.quote_token_amount else None
+        
+        liquidity = calculate_liquidity_from_amount(
+            current_price, lower_price, upper_price,
+            amount0=base_amount, amount1=quote_amount
+        )
+        
+        # Step 2: Calculate both amounts from liquidity
+        calculated_base, calculated_quote = calculate_amounts_from_liquidity(
+            liquidity, current_price, lower_price, upper_price
+        )
+        
+        # Check if current price is in range
+        in_range = lower_price <= current_price < upper_price
+        
+        logger.info(
+            f"CLMM Quote calculated: pool={request.pool_address}, "
+            f"current_price={current_price:.6f}, range=[{lower_price:.6f}, {upper_price:.6f}], "
+            f"base={calculated_base:.4f}, quote={calculated_quote:.2f}, "
+            f"liquidity={liquidity:.0f}, in_range={in_range}"
+        )
+        
+        return CLMMQuoteResponse(
+            pool_address=request.pool_address,
+            current_price=Decimal(str(current_price)),
+            lower_price=request.lower_price,
+            upper_price=request.upper_price,
+            base_token_amount=Decimal(str(calculated_base)),
+            quote_token_amount=Decimal(str(calculated_quote)),
+            liquidity=str(int(liquidity)),
+            in_range=in_range,
+            base_token_value_usd=Decimal(str(calculated_base * current_price)) if current_price else None,
+            quote_token_value_usd=Decimal(str(calculated_quote)) if current_price else None,
+            total_value_usd=Decimal(str((calculated_base * current_price) + calculated_quote)) if current_price else None
+        )
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error calculating CLMM quote: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error calculating CLMM quote: {str(e)}")
 
 
 @router.get("/clmm/pools", response_model=CLMMPoolListResponse)
@@ -1106,6 +1293,131 @@ async def close_clmm_position(
     except Exception as e:
         logger.error(f"Error closing CLMM position: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error closing CLMM position: {str(e)}")
+
+
+@router.get("/clmm/position-fees/{position_address}", response_model=CLMMPositionFeesResponse)
+async def get_position_pending_fees(
+    position_address: str,
+    connector: str = Query(..., description="CLMM connector (e.g., 'pancakeswap_v3_bsc')"),
+    network: str = Query(..., description="Network ID (e.g., 'bsc-mainnet')"),
+    wallet_address: Optional[str] = Query(None, description="Wallet address (optional)"),
+    accounts_service: AccountsService = Depends(get_accounts_service),
+    db_manager: AsyncDatabaseManager = Depends(get_database_manager)
+):
+    """
+    Check pending fees for a CLMM position and get collection recommendation.
+    
+    This endpoint fetches the current pending fees for a position and calculates
+    whether it's cost-effective to collect them based on gas costs.
+    
+    Example:
+        GET /gateway/clmm/position-fees/6220678?connector=pancakeswap_v3_bsc&network=bsc-mainnet
+    
+    Returns:
+        Position fee information with collection recommendation
+    """
+    try:
+        if not await accounts_service.gateway_client.ping():
+            raise HTTPException(status_code=503, detail="Gateway service is not available")
+
+        # Parse network_id
+        chain, network_name = accounts_service.gateway_client.parse_network_id(network)
+
+        # Get pool_address and wallet_address from database
+        pool_address = None
+        if not wallet_address:
+            async with db_manager.get_session_context() as session:
+                clmm_repo = GatewayCLMMRepository(session)
+                db_position = await clmm_repo.get_position_by_address(position_address)
+                if db_position:
+                    pool_address = db_position.pool_address
+                    wallet_address = db_position.wallet_address
+
+        # If not in database, use default wallet
+        if not wallet_address:
+            wallet_address = await accounts_service.gateway_client.get_wallet_address_or_default(
+                chain=chain,
+                network=network_name
+            )
+
+        # If no pool_address from database, we can't query Gateway
+        if not pool_address:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Position {position_address} not found in database. Pool address is required."
+            )
+
+        # Fetch position details including pending fees
+        positions_list = await accounts_service.gateway_client.clmm_positions_owned(
+            connector=connector,
+            chain_network=network,
+            wallet_address=wallet_address,
+            pool_address=pool_address
+        )
+
+        # Find the specific position
+        position_data = None
+        if positions_list and isinstance(positions_list, list):
+            for pos in positions_list:
+                if pos and pos.get("address") == position_address:
+                    position_data = pos
+                    break
+
+        if not position_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Position {position_address} not found or is closed"
+            )
+
+        # Extract fee information
+        base_fee = Decimal(str(position_data.get("baseFeeAmount", 0)))
+        quote_fee = Decimal(str(position_data.get("quoteFeeAmount", 0)))
+        base_token = position_data.get("baseToken", "BASE")
+        quote_token = position_data.get("quoteToken", "QUOTE")
+        
+        # Build pending fees dict
+        pending_fees = {
+            base_token: float(base_fee),
+            quote_token: float(quote_fee)
+        }
+
+        # TODO: Calculate USD values and gas costs
+        # For now, provide basic recommendation based on fee amounts
+        fees_value_usd = None
+        estimated_gas_cost_usd = None
+        net_profit_usd = None
+        
+        # Simple recommendation logic (can be enhanced with price feeds)
+        if base_fee == 0 and quote_fee == 0:
+            recommendation = "WAIT"
+            reason = "No fees to collect"
+        elif base_fee > Decimal("0.001") or quote_fee > Decimal("0.001"):
+            recommendation = "COLLECT_NOW"
+            reason = "Fees are available for collection"
+        else:
+            recommendation = "WAIT"
+            reason = "Fee amounts are very small, may not cover gas costs"
+
+        return CLMMPositionFeesResponse(
+            position_address=position_address,
+            base_token=base_token,
+            quote_token=quote_token,
+            pending_fees=pending_fees,
+            fees_value_usd=fees_value_usd,
+            estimated_gas_cost_usd=estimated_gas_cost_usd,
+            net_profit_usd=net_profit_usd,
+            recommendation=recommendation,
+            reason=reason
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Invalid request: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error fetching position fees: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error fetching position fees: {str(e)}")
 
 
 @router.post("/clmm/collect-fees", response_model=CLMMCollectFeesResponse)

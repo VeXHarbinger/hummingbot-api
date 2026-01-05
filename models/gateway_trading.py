@@ -91,6 +91,40 @@ class CLMMOpenPositionResponse(BaseModel):
     status: str = Field(default="submitted", description="Transaction status")
 
 
+class CLMMQuoteRequest(BaseModel):
+    """Request to calculate token amounts for a CLMM position (preview/quote)"""
+    connector: str = Field(description="CLMM connector (e.g., 'pancakeswap', 'meteora', 'raydium')")
+    network: str = Field(description="Network ID in 'chain-network' format (e.g., 'ethereum-bsc', 'solana-mainnet-beta')")
+    pool_address: str = Field(description="Pool contract address")
+    
+    # Position range
+    lower_price: Decimal = Field(description="Lower price for position range")
+    upper_price: Decimal = Field(description="Upper price for position range")
+    
+    # Provide ONE token amount to calculate the other
+    base_token_amount: Optional[Decimal] = Field(default=None, description="Amount of base token (calculates quote amount needed)")
+    quote_token_amount: Optional[Decimal] = Field(default=None, description="Amount of quote token (calculates base amount needed)")
+
+
+class CLMMQuoteResponse(BaseModel):
+    """Response with calculated token amounts for a CLMM position"""
+    pool_address: str = Field(description="Pool contract address")
+    current_price: Decimal = Field(description="Current pool price")
+    lower_price: Decimal = Field(description="Lower price bound")
+    upper_price: Decimal = Field(description="Upper price bound")
+    
+    # Calculated amounts
+    base_token_amount: Decimal = Field(description="Calculated base token amount needed")
+    quote_token_amount: Decimal = Field(description="Calculated quote token amount needed")
+    liquidity: str = Field(description="Liquidity that would be created")
+    
+    # Position info
+    in_range: bool = Field(description="Whether current price is in range")
+    base_token_value_usd: Optional[Decimal] = Field(default=None, description="Value of base tokens in USD")
+    quote_token_value_usd: Optional[Decimal] = Field(default=None, description="Value of quote tokens in USD")
+    total_value_usd: Optional[Decimal] = Field(default=None, description="Total position value in USD")
+
+
 class CLMMAddLiquidityRequest(BaseModel):
     """Request to add MORE liquidity to an EXISTING CLMM position"""
     connector: str = Field(description="CLMM connector (e.g., 'meteora', 'raydium', 'uniswap')")
@@ -134,6 +168,27 @@ class CLMMCollectFeesResponse(BaseModel):
     base_fee_collected: Optional[Decimal] = Field(default=None, description="Base token fees collected")
     quote_fee_collected: Optional[Decimal] = Field(default=None, description="Quote token fees collected")
     status: str = Field(default="submitted", description="Transaction status")
+
+
+class CLMMPositionFeesRequest(BaseModel):
+    """Request to check pending fees for a CLMM position"""
+    connector: str = Field(description="CLMM connector (e.g., 'pancakeswap_v3_bsc', 'meteora', 'raydium')")
+    network: str = Field(description="Network ID in 'chain-network' format (e.g., 'bsc-mainnet', 'solana-mainnet-beta')")
+    position_address: str = Field(description="Position address/token ID")
+    wallet_address: Optional[str] = Field(default=None, description="Wallet address (optional, uses default if not provided)")
+
+
+class CLMMPositionFeesResponse(BaseModel):
+    """Response with pending fee information and collection recommendation"""
+    position_address: str = Field(description="Position address")
+    base_token: str = Field(description="Base token symbol")
+    quote_token: str = Field(description="Quote token symbol")
+    pending_fees: dict = Field(description="Pending fees by token")
+    fees_value_usd: Optional[Decimal] = Field(default=None, description="Total fees value in USD")
+    estimated_gas_cost_usd: Optional[Decimal] = Field(default=None, description="Estimated gas cost in USD")
+    net_profit_usd: Optional[Decimal] = Field(default=None, description="Net profit after gas costs")
+    recommendation: str = Field(description="COLLECT_NOW or WAIT")
+    reason: Optional[str] = Field(default=None, description="Reason for recommendation")
 
 
 class CLMMPositionsOwnedRequest(BaseModel):
