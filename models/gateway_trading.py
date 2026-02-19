@@ -333,3 +333,32 @@ class CLMMPoolListResponse(BaseModel):
     total: int = Field(description="Total number of pools")
     page: int = Field(description="Current page number")
     limit: int = Field(description="Results per page")
+
+
+# ============================================
+# PancakeSwap MasterChef Models
+# ============================================
+
+class PancakeMasterchefUnstakeAndCloseRequest(BaseModel):
+    """Request to unstake NFT and close position"""
+    network: str = Field(description="Network name (e.g., 'bsc')")
+    wallet_address: str = Field(description="Wallet address that owns the NFT")
+    token_id: int = Field(description="NFT position ID to unstake and close")
+
+
+class PositionClosedDetails(BaseModel):
+    """Details about closed position"""
+    fee: Decimal = Field(description="Transaction gas fee")
+    position_rent_refunded: Decimal = Field(description="Position rent refund (if applicable)")
+    base_token_amount_removed: Decimal = Field(description="Base token liquidity removed")
+    quote_token_amount_removed: Decimal = Field(description="Quote token liquidity removed")
+    base_fee_amount_collected: Decimal = Field(description="Base token fees collected")
+    quote_fee_amount_collected: Decimal = Field(description="Quote token fees collected")
+
+
+class PancakeMasterchefUnstakeAndCloseResponse(BaseModel):
+    """Response after unstake and close operation"""
+    message: str = Field(description="Success message")
+    unstake_transaction: str = Field(description="Transaction hash from unstake")
+    close_transaction: str = Field(description="Transaction hash from close")
+    position_closed: PositionClosedDetails = Field(description="Details about closed position")

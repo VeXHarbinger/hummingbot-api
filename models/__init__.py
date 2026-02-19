@@ -117,6 +117,8 @@ from .gateway import (
     GatewayBalanceRequest,
     AddPoolRequest,
     AddTokenRequest,
+    MasterchefKnowsPoolRequest,
+    MasterchefKnowsPoolResponse,
 )
 
 # Backtesting models
@@ -163,6 +165,10 @@ from .gateway_trading import (
     TimeBasedMetrics,
     CLMMPoolListItem,
     CLMMPoolListResponse,
+    # PancakeSwap MasterChef models
+    PancakeMasterchefUnstakeAndCloseRequest,
+    PositionClosedDetails,
+    PancakeMasterchefUnstakeAndCloseResponse,
 )
 
 # Portfolio models
@@ -312,6 +318,8 @@ __all__ = [
     "GatewayBalanceRequest",
     "AddPoolRequest",
     "AddTokenRequest",
+    "MasterchefKnowsPoolRequest",
+    "MasterchefKnowsPoolResponse",
     # Backtesting models
     "BacktestingConfig",
     # Pagination models
@@ -348,6 +356,10 @@ __all__ = [
     "TimeBasedMetrics",
     "CLMMPoolListItem",
     "CLMMPoolListResponse",
+    # PancakeSwap MasterChef models
+    "PancakeMasterchefUnstakeAndCloseRequest",
+    "PositionClosedDetails",
+    "PancakeMasterchefUnstakeAndCloseResponse",
     # Portfolio models
     "TokenBalance",
     "ConnectorBalances",

@@ -97,3 +97,19 @@ class GatewayBalanceRequest(BaseModel):
     account_name: str = Field(description="Account name")
     chain: str = Field(description="Blockchain chain")
     tokens: Optional[List[str]] = Field(default=None, description="List of token symbols to query (optional)")
+
+
+# ============================================
+# MasterChef Models
+# ============================================
+
+class MasterchefKnowsPoolRequest(BaseModel):
+    """Request to check if MasterChef knows a pool"""
+    network: str = Field(description="Network name (e.g., 'bsc')")
+    poolAddress: str = Field(description="Pool contract address")
+
+
+class MasterchefKnowsPoolResponse(BaseModel):
+    """Response indicating if pool is known to MasterChef"""
+    poolId: str = Field(description="Pool ID if known, or empty string")
+    known: bool = Field(description="True if pool is known to MasterChef")

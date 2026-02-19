@@ -8,7 +8,7 @@ from typing import List, Optional
 from decimal import Decimal
 import aiohttp
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 
 from deps import get_accounts_service, get_database_manager
 from services.accounts_service import AccountsService
@@ -28,6 +28,8 @@ from models import (
     CLMMPoolListItem,
     CLMMPoolListResponse,
     TimeBasedMetrics,
+    MasterchefKnowsPoolRequest,
+    MasterchefKnowsPoolResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -1490,5 +1492,63 @@ async def search_clmm_positions(
     except Exception as e:
         logger.error(f"Error searching CLMM positions: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error searching CLMM positions: {str(e)}")
+
+
+@router.post(
+    "/connector/pancakeswap/masterchef-knows-pool",
+    response_model=MasterchefKnowsPoolResponse,
+    tags=["Gateway CLMM"],
+    summary="Check if PancakeSwap MasterChef knows a pool",
+    description="Checks if a given pool address is known to the PancakeSwap MasterChef contract on the specified network.",
+    operation_id="masterchefKnowsPool"
+)
+async def masterchef_knows_pool(
+    request: MasterchefKnowsPoolRequest = Body(...),
+    accounts_service: AccountsService = Depends(get_accounts_service),
+):
+    """
+    Check if a pool address is registered with PancakeSwap MasterChef.
+
+    This endpoint queries the PancakeSwap MasterChef contract to determine if a given
+    pool address is known and can be used for farming operations.
+
+    Args:
+        request: MasterchefKnowsPoolRequest with network and pool address
+
+    Returns:
+        MasterchefKnowsPoolResponse with poolId and known status
+
+    Raises:
+        HTTPException: 500 if Gateway request fails
+    """
+    try:
+        gateway_client = accounts_service.gateway_client
+        if not gateway_client:
+            raise HTTPException(status_code=500, detail="Gateway client not initialized")
+
+        response = await gateway_client._request(
+            "POST",
+            f"connector/pancakeswap/masterchef/knows-pool",
+            json={
+                "network": request.network,
+                "poolAddress": request.poolAddress
+            }
+        )
+
+        if response is None or "error" in response:
+            error_msg = response.get("error", "Gateway request failed") if response else "Gateway unavailable"
+            logger.error(f"Gateway MasterChef knows-pool request failed: {error_msg}")
+            raise HTTPException(status_code=500, detail=f"Gateway error: {error_msg}")
+
+        return MasterchefKnowsPoolResponse(
+            poolId=response.get("poolId", ""),
+            known=response.get("known", False)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking if MasterChef knows pool: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error checking MasterChef pool: {str(e)}")
 
 

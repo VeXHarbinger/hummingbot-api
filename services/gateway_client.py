@@ -155,13 +155,27 @@ class GatewayClient:
             logger.error(f"Error getting all wallet addresses: {e}")
             return {}
 
-    async def add_wallet(self, chain: str, private_key: str, set_default: bool = True) -> Dict:
-        """Add a wallet to Gateway"""
-        return await self._request("POST", "wallet/add", json={
+    async def add_wallet(self, chain: str, private_key: str, set_default: bool = True, network: Optional[str] = None) -> Dict:
+        """
+        Add a wallet to Gateway.
+
+        Args:
+            chain: Blockchain chain (e.g., 'ethereum', 'solana')
+            private_key: Wallet private key
+            set_default: Whether to set as default wallet for the chain
+            network: Optional network parameter for network-specific wallet configurations
+
+        Returns:
+            Wallet information from Gateway
+        """
+        payload = {
             "chain": chain,
             "privateKey": private_key,
             "setDefault": set_default
-        })
+        }
+        if network:
+            payload["network"] = network
+        return await self._request("POST", "wallet/add", json=payload)
 
     async def create_wallet(self, chain: str, set_default: bool = True) -> Dict:
         """Create a new wallet in Gateway"""
@@ -612,4 +626,66 @@ class GatewayClient:
         except Exception as e:
             logger.error(f"Error polling transaction {tx_hash}: {e}")
             return None
+
+    async def clmm_stakeNft(
+        self,
+        chain: str,
+        network: str,
+        wallet_address: str,
+        nft_id: str,
+        amount: Decimal
+    ) -> Dict:
+        """
+        Stake NFT in PancakeSwap MasterChef contract.
+
+        Args:
+            chain: Blockchain chain (e.g., 'ethereum')
+            network: Network name (e.g., 'bsc')
+            wallet_address: Wallet address that owns the NFT
+            nft_id: NFT position ID to stake
+            amount: Amount to stake (in base token units)
+
+        Returns:
+            Response dict with transaction hash and details
+        """
+        path = "connector/pancakeswap/masterchef/stake"
+        json_payload = {
+            "chain": chain,
+            "network": network,
+            "wallet_address": wallet_address,
+            "nft_id": nft_id,
+            "amount": str(amount)
+        }
+        return await self._request("POST", path, json=json_payload)
+
+    async def clmm_unstakeNft(
+        self,
+        chain: str,
+        network: str,
+        wallet_address: str,
+        nft_id: str,
+        amount: Decimal
+    ) -> Dict:
+        """
+        Unstake NFT from PancakeSwap MasterChef contract.
+
+        Args:
+            chain: Blockchain chain (e.g., 'ethereum')
+            network: Network name (e.g., 'bsc')
+            wallet_address: Wallet address that owns the NFT
+            nft_id: NFT position ID to unstake
+            amount: Amount to unstake (in base token units)
+
+        Returns:
+            Response dict with transaction hash and details
+        """
+        path = "connector/pancakeswap/masterchef/unstake"
+        json_payload = {
+            "chain": chain,
+            "network": network,
+            "wallet_address": wallet_address,
+            "nft_id": nft_id,
+            "amount": str(amount)
+        }
+        return await self._request("POST", path, json=json_payload)
 
